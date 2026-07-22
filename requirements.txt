@@ -21,3 +21,4 @@ tenacity>=9.0
 
 # --- dev / test ---
 pytest>=8.3
+httpx2  # required by starlette.testclient (FastAPI TestClient) on newer Starlette; see Part 9 notes
