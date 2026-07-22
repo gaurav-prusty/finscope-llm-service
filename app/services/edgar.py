@@ -87,28 +87,51 @@ def _format_cik(cik: int) -> str:
     return f"{cik:010d}"
 
 
-def get_company_cik(ticker: str) -> str:
-    """Resolve a ticker (e.g. 'AAPL') to its 10-digit zero-padded CIK."""
+def _find_ticker_entry(ticker: str) -> dict:
+    """Look up a ticker's raw entry ({cik_str, ticker, title}) in SEC's
+    published ticker->CIK mapping. Shared by get_company_cik and
+    get_company_name so both resolve against the same cached lookup."""
     raw = _cached_get(TICKERS_URL, "company_tickers.json")
     tickers = json.loads(raw)  # {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, ...}
     ticker_upper = ticker.upper()
     for entry in tickers.values():
         if entry["ticker"] == ticker_upper:
-            return _format_cik(entry["cik_str"])
+            return entry
     raise ValueError(f"No CIK found for ticker {ticker!r}")
 
 
-class FilingMeta(BaseModel):
-    """One filing's metadata, as returned by the submissions API."""
+def get_company_cik(ticker: str) -> str:
+    """Resolve a ticker (e.g. 'AAPL') to its 10-digit zero-padded CIK."""
+    return _format_cik(_find_ticker_entry(ticker)["cik_str"])
 
+
+def get_company_name(ticker: str) -> str:
+    """Resolve a ticker to the company's registered name, e.g. 'Apple Inc.'."""
+    return _find_ticker_entry(ticker)["title"]
+
+
+class FilingMeta(BaseModel):
+    """One filing's metadata -- deterministic, sourced entirely from our own
+    EDGAR fetch. This never passes through the LLM: see app/llm/schemas.py
+    for why (we don't ask a model to re-derive facts we already have)."""
+
+    ticker: str
+    company_name: str
     cik: str
     accession_number: str
     form: str
-    filing_date: str
+    filing_date: str  # when the filing was submitted to SEC
+    report_date: str  # the fiscal period this filing actually covers
     primary_document: str
 
 
-def get_recent_filings(cik: str, form_type: str | None = None, limit: int = 5) -> list[FilingMeta]:
+def get_recent_filings(
+    cik: str,
+    ticker: str,
+    company_name: str,
+    form_type: str | None = None,
+    limit: int = 5,
+) -> list[FilingMeta]:
     """List a company's most recent filings, optionally filtered by form type.
 
     The submissions endpoint returns a "struct of arrays" (parallel lists,
@@ -121,16 +144,20 @@ def get_recent_filings(cik: str, form_type: str | None = None, limit: int = 5) -
 
     filings = [
         FilingMeta(
+            ticker=ticker,
+            company_name=company_name,
             cik=cik,
             accession_number=accession,
             form=form,
             filing_date=filing_date,
+            report_date=report_date,
             primary_document=primary_document,
         )
-        for accession, form, filing_date, primary_document in zip(
+        for accession, form, filing_date, report_date, primary_document in zip(
             recent["accessionNumber"],
             recent["form"],
             recent["filingDate"],
+            recent["reportDate"],
             recent["primaryDocument"],
         )
         if form_type is None or form == form_type
@@ -229,7 +256,8 @@ def fetch_filing_section(
 ) -> tuple[FilingMeta, str]:
     """End-to-end: ticker -> most recent matching filing -> one plain-text section."""
     cik = get_company_cik(ticker)
-    filings = get_recent_filings(cik, form_type=form_type, limit=1)
+    company_name = get_company_name(ticker)
+    filings = get_recent_filings(cik, ticker=ticker, company_name=company_name, form_type=form_type, limit=1)
     if not filings:
         raise ValueError(f"No {form_type} filings found for {ticker}")
     filing = filings[0]
