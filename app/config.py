@@ -25,11 +25,21 @@ class Settings(BaseSettings):
     llm_model: str = "claude-sonnet-5"
     llm_max_tokens: int = 16000
     llm_timeout_seconds: float = 60.0
+    # Tenacity is the ONE retry layer (Part 6) -- the SDK's own silent retry is
+    # disabled (max_retries=0 on the Anthropic client) so every attempt is
+    # observable and governed by this single, logged policy.
+    llm_max_retries: int = 3
 
     # --- SEC EDGAR (Part 1) ---
     # SEC's fair-access policy REQUIRES a descriptive User-Agent with a contact.
     # Override this in .env with your real name/email before fetching.
     sec_user_agent: str = "FinScope-LLM-Service (contact: set-me@example.com)"
+
+    # --- Rate limiting (Part 6) ---
+    # A single shared token bucket across all inbound requests -- see
+    # app/middleware/ratelimit.py for why (no per-client identity yet).
+    rate_limit_capacity: int = 20
+    rate_limit_refill_per_second: float = 5.0
 
     # --- App ---
     app_env: str = "local"
