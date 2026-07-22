@@ -8,7 +8,13 @@ committed fixture in tests/fixtures/; see the Part 1 verification notes.
 
 import pytest
 
-from app.services.edgar import _format_cik, extract_item_section, strip_html_to_text
+from app.services.edgar import (
+    RISK_FACTORS_ITEM_END_RES,
+    RISK_FACTORS_ITEM_START_RE,
+    _format_cik,
+    extract_item_section,
+    strip_html_to_text,
+)
 
 
 def test_format_cik_pads_to_ten_digits() -> None:
@@ -45,8 +51,8 @@ def test_extract_item_section_skips_table_of_contents_occurrence() -> None:
     )
     section = extract_item_section(
         text,
-        start_re=r"item\s+1a\.?\s*risk\s+factors",
-        end_res=[r"item\s+1b", r"item\s+2"],
+        start_re=RISK_FACTORS_ITEM_START_RE,
+        end_res=RISK_FACTORS_ITEM_END_RES,
     )
     assert section.startswith("Item 1A. Risk Factors")
     assert "significant risks" in section

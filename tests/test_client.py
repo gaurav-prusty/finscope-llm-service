@@ -74,6 +74,33 @@ class _FakeUsage:
     output_tokens = 5
 
 
+class _FakeAnthropicStream:
+    """Stands in for the object Anthropic's `with client.messages.stream(...) as
+    raw_stream:` yields -- .text_stream plus .get_final_message()."""
+
+    def __init__(self, deltas: list[str], final: object) -> None:
+        self.text_stream = iter(deltas)
+        self._final = final
+
+    def get_final_message(self):
+        if isinstance(self._final, BaseException):
+            raise self._final
+        return self._final
+
+
+class _FakeStreamContextManager:
+    """Stands in for client.messages.stream(...)'s return value (a context manager)."""
+
+    def __init__(self, deltas: list[str], final: object) -> None:
+        self._stream = _FakeAnthropicStream(deltas, final)
+
+    def __enter__(self):
+        return self._stream
+
+    def __exit__(self, *exc_info) -> bool:
+        return False
+
+
 def test_generate_structured_retries_transient_failures_then_succeeds(monkeypatch) -> None:
     monkeypatch.setattr("tenacity.nap.time.sleep", lambda seconds: None)
     client = AnthropicClient(api_key="sk-ant-test-key")
@@ -136,6 +163,38 @@ def test_generate_structured_logs_cost_telemetry(monkeypatch, caplog) -> None:
         client.generate_structured(system="s", user="u", response_model=_Greeting)
 
     assert any("llm_usage" in record.getMessage() for record in caplog.records)
+
+
+def test_stream_structured_yields_deltas_and_final_result(monkeypatch) -> None:
+    client = AnthropicClient(api_key="sk-ant-test-key")
+    monkeypatch.setattr(
+        client._client.messages, "stream", lambda **kwargs: _FakeStreamContextManager(["Hello", " world"], _FakeResponse())
+    )
+
+    with client.stream_structured(system="s", user="u", response_model=_Greeting) as stream:
+        deltas = list(stream.text_stream)
+        result = stream.get_final_result()
+
+    assert deltas == ["Hello", " world"]
+    assert result.parsed.greeting == "Bonjour"
+    assert result.model == "claude-sonnet-5"
+
+
+def test_stream_structured_get_final_result_propagates_validation_error(monkeypatch) -> None:
+    """Confirms the documented limitation directly: the failure only
+    surfaces once get_final_result() is called, after text_stream is
+    already exhausted -- not per-delta."""
+    client = AnthropicClient(api_key="sk-ant-test-key")
+    monkeypatch.setattr(
+        client._client.messages, "stream", lambda **kwargs: _FakeStreamContextManager(["partial"], _validation_error())
+    )
+
+    with client.stream_structured(system="s", user="u", response_model=_Greeting) as stream:
+        deltas = list(stream.text_stream)  # exhausting text_stream does NOT raise
+        with pytest.raises(ValidationError):
+            stream.get_final_result()
+
+    assert deltas == ["partial"]
 
 
 @pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")

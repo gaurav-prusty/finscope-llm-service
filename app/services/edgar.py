@@ -248,6 +248,15 @@ def extract_item_section(text: str, start_re: str, end_res: list[str]) -> str:
     return text[start:end].strip()
 
 
+# Item 1A is the only section the pipeline has been built and fixture-tested
+# against (see tests/fixtures/aapl_10k_risk_factors.*) -- centralized here as
+# named constants so app/main.py's endpoints (Part 8) don't hand-roll regex,
+# and so widening to other sections later (e.g. Item 7 MD&A, see Part 4's
+# resolved note in CLAUDE.md) means adding a constant, not touching call sites.
+RISK_FACTORS_ITEM_START_RE = r"item\s+1a\.?\s*risk\s+factors"
+RISK_FACTORS_ITEM_END_RES = [r"item\s+1b", r"item\s+2"]
+
+
 def fetch_filing_section(
     ticker: str,
     item_start: str,

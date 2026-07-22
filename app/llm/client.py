@@ -23,10 +23,24 @@ Cost telemetry (Part 7): every successful call logs its token counts and
 estimated $ via telemetry/cost.py, for the same reason retry lives here --
 "how much did this call cost" is a property of the call itself, not
 filing-summarization policy, so every caller gets it for free.
+
+Streaming (Part 8): stream_structured() exists because Anthropic's SDK only
+validates a streamed structured response against our schema once the content
+block completes -- near the END of the stream, not per-token (confirmed by
+reading anthropic/lib/streaming/_messages.py: parse_text() runs on
+content_block_stop, after nearly all text has already been yielded). That
+means a caller streaming this to an HTTP client has already sent most of the
+content before a validation failure could even be detected -- there is no
+clean way to "take it back" mid-stream. So unlike generate_structured(),
+stream_structured() gets NO repair-then-fail retry of its own; that
+guarantee only exists on the non-streaming path. Callers needing a
+guaranteed-valid result should use generate_structured(), not this.
 """
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
@@ -55,20 +69,41 @@ class LLMResult(Generic[T]):
     model: str  # the model that actually served the request
 
 
-class LLMClient(ABC):
-    """One method: prompt in, validated pydantic object out.
+@dataclass(frozen=True)
+class LLMStream(Generic[T]):
+    text_stream: Iterator[str]
+    get_final_result: Callable[[], LLMResult[T]]
 
-    Contract: raises pydantic.ValidationError if the model's response doesn't
-    satisfy response_model -- there is no "invalid result" return value, only
-    a valid LLMResult or an exception. From the caller's perspective this is
-    one logical call (repair-then-fail policy, catching that ValidationError,
-    is the caller's job -- see services/summarize.py, Part 5); an
-    implementation MAY retry transparently underneath for transient failures
-    that aren't ValidationError, as AnthropicClient does.
+
+class LLMClient(ABC):
+    """Two methods: prompt in, validated pydantic object out -- either all
+    at once, or as a live text stream with the validated object available
+    only once the stream is exhausted.
+
+    Contract (generate_structured): raises pydantic.ValidationError if the
+    model's response doesn't satisfy response_model -- there is no "invalid
+    result" return value, only a valid LLMResult or an exception. From the
+    caller's perspective this is one logical call (repair-then-fail policy,
+    catching that ValidationError, is the caller's job -- see
+    services/summarize.py, Part 5); an implementation MAY retry transparently
+    underneath for transient failures that aren't ValidationError, as
+    AnthropicClient does.
+
+    Contract (stream_structured): a context manager yielding an LLMStream.
+    Iterate text_stream for live text, then call get_final_result() (which
+    may raise pydantic.ValidationError, possibly after most of the content
+    has already been streamed -- see this module's docstring). No retry of
+    any kind here, transient or repair.
     """
 
     @abstractmethod
     def generate_structured(self, *, system: str, user: str, response_model: type[T]) -> LLMResult[T]:
+        ...
+
+    @abstractmethod
+    def stream_structured(
+        self, *, system: str, user: str, response_model: type[T]
+    ) -> AbstractContextManager[LLMStream[T]]:
         ...
 
 
@@ -118,3 +153,33 @@ class AnthropicClient(LLMClient):
             ),
             model=response.model,
         )
+
+    @contextmanager
+    def stream_structured(
+        self, *, system: str, user: str, response_model: type[T]
+    ) -> Iterator[LLMStream[T]]:
+        # Anthropic's own stream() is itself a context manager -- nested here
+        # so ITS __exit__ (closing the HTTP stream) runs when OURS does,
+        # tied to the caller's `with` block (e.g. the SSE generator's
+        # lifetime), not left dangling if get_final_result() is never called.
+        with self._client.messages.stream(
+            model=self._model,
+            max_tokens=self._max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            output_format=response_model,
+        ) as raw_stream:
+
+            def get_final_result() -> LLMResult[T]:
+                message = raw_stream.get_final_message()
+                log_usage(message.model, message.usage.input_tokens, message.usage.output_tokens)
+                return LLMResult(
+                    parsed=message.parsed_output,
+                    usage=LLMUsage(
+                        input_tokens=message.usage.input_tokens,
+                        output_tokens=message.usage.output_tokens,
+                    ),
+                    model=message.model,
+                )
+
+            yield LLMStream(text_stream=raw_stream.text_stream, get_final_result=get_final_result)
