@@ -1,0 +1,16 @@
+# Claude files
+CLAUDE.md
+SKILLS.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Secrets / local env
+.env
+
+# EDGAR fetch cache (Part 1)
+.cache/
