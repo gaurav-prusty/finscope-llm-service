@@ -18,6 +18,11 @@ filing-summarization business policy and stays in services/summarize.py.
 The two must never merge: pydantic.ValidationError (a well-formed response
 that fails our schema) is never retried here -- only failures where the call
 itself didn't complete are.
+
+Cost telemetry (Part 7): every successful call logs its token counts and
+estimated $ via telemetry/cost.py, for the same reason retry lives here --
+"how much did this call cost" is a property of the call itself, not
+filing-summarization policy, so every caller gets it for free.
 """
 
 import logging
@@ -30,6 +35,7 @@ from pydantic import BaseModel
 from tenacity import Retrying, before_sleep_log, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+from app.telemetry.cost import log_usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -103,6 +109,7 @@ class AnthropicClient(LLMClient):
             messages=[{"role": "user", "content": user}],
             output_format=response_model,
         )
+        log_usage(response.model, response.usage.input_tokens, response.usage.output_tokens)
         return LLMResult(
             parsed=response.parsed_output,
             usage=LLMUsage(

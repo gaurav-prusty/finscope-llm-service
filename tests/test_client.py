@@ -8,6 +8,8 @@ skipped automatically when ANTHROPIC_API_KEY isn't set, so `pytest -q` stays
 green without a key.
 """
 
+import logging
+
 import anthropic
 import httpx
 import pytest
@@ -121,6 +123,19 @@ def test_generate_structured_does_not_retry_validation_errors(monkeypatch) -> No
         client.generate_structured(system="s", user="u", response_model=_Greeting)
 
     assert fake_parse.call_count == 1
+
+
+def test_generate_structured_logs_cost_telemetry(monkeypatch, caplog) -> None:
+    """Confirms the telemetry hook (Part 7) actually fires on a real call
+    path, not just that log_usage() works in isolation (tests/test_cost.py)."""
+    client = AnthropicClient(api_key="sk-ant-test-key")
+    fake_parse = _ScriptedParse([_FakeResponse()])
+    monkeypatch.setattr(client._client.messages, "parse", fake_parse)
+
+    with caplog.at_level(logging.INFO, logger="app.telemetry.cost"):
+        client.generate_structured(system="s", user="u", response_model=_Greeting)
+
+    assert any("llm_usage" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
