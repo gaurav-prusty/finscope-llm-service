@@ -38,7 +38,15 @@ class LLMResult(Generic[T]):
 
 
 class LLMClient(ABC):
-    """One method: prompt in, validated pydantic object out."""
+    """One method: prompt in, validated pydantic object out.
+
+    Contract: raises pydantic.ValidationError if the model's response doesn't
+    satisfy response_model -- there is no "invalid result" return value, only
+    a valid LLMResult or an exception. This one call is intentionally
+    single-shot with no retry of its own; repair-then-fail policy (catching
+    that ValidationError and retrying with a repair prompt) is the caller's
+    job -- see services/summarize.py (Part 5).
+    """
 
     @abstractmethod
     def generate_structured(self, *, system: str, user: str, response_model: type[T]) -> LLMResult[T]:

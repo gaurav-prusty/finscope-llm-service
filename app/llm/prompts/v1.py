@@ -5,6 +5,8 @@ convention this file is part of. A wording change means writing v2.py, never
 editing this one.
 """
 
+from pydantic import ValidationError
+
 from app.services.edgar import FilingMeta
 
 VERSION = "v1"
@@ -43,3 +45,21 @@ Filing: {meta.form}, filed {meta.filing_date}, covering period {meta.report_date
 Filing excerpt:
 {section_text}
 """
+
+
+def build_repair_user_prompt(original_user_prompt: str, error: ValidationError) -> str:
+    """Re-sent on the one repair attempt after a validation failure.
+
+    We don't have the model's raw invalid JSON to show it back (see
+    app/llm/client.py's docstring -- messages.parse() raises before handing
+    us the raw text), only pydantic's structured complaint about it. That's
+    still specific enough to act on: it names the exact field and constraint
+    that failed. The full original prompt is re-sent because each call is
+    single-shot/stateless -- there's no prior conversation turn to lean on.
+    """
+    return f"""{original_user_prompt}
+
+Your previous response did not satisfy the required output format:
+{error}
+
+Provide a corrected response that fixes this issue."""
