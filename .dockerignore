@@ -1,0 +1,25 @@
+# Never let secrets into the build context -- this is what makes
+# "no secrets baked in" true, not just a comment somewhere.
+.env
+
+# Local dev environment -- the image gets its own fresh install
+# from requirements.lock.txt, not a copy of this venv.
+.venv/
+
+# Git history -- irrelevant to what gets run, and can be large.
+.git/
+.gitignore
+
+# Local caches / build artifacts -- regenerated at runtime or not needed at all.
+.cache/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Dev-only: tests and fixtures don't belong in a production image.
+tests/
+
+# Docs -- not needed to run the service.
+README.md
+CLAUDE.md
+SKILLS.md
