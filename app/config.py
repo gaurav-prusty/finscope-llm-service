@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # SEC's fair-access policy REQUIRES a descriptive User-Agent with a contact.
     # Override this in .env with your real name/email before fetching.
     sec_user_agent: str = "FinScope-LLM-Service (contact: set-me@example.com)"
+    edgar_cache_dir: str = ".cache/edgar"
 
     # --- Rate limiting (Part 6) ---
     # A single shared token bucket across all inbound requests -- see

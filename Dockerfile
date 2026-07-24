@@ -5,6 +5,11 @@ FROM python:3.12.3-slim-bookworm
 # pulling in that image's entire toolchain, just these two files.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
+# Lambda Web Adapter: lets this unmodified uvicorn app run under
+# AWS Lambda -- inert under plain `docker run`, since only Lambda's own
+# runtime scans /opt/extensions/.
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 /lambda-adapter /opt/extensions/lambda-adapter
+
 WORKDIR /app
 
 # Dependencies before app code -- Docker caches each instruction as its own
@@ -24,6 +29,13 @@ COPY app/ app/
 # check would never catch this -- /health never touches EDGAR.
 RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
 USER appuser
+
+# AWS_LWA_PORT tells the Lambda Web Adapter which local port to proxy to --
+# matches --port 8000 below. AWS_LWA_INVOKE_MODE=response_stream is the
+# adapter-side half of enabling SSE streaming for /summarize/stream; the
+# Function URL itself needs a matching setting too (configured later).
+ENV AWS_LWA_PORT=8000
+ENV AWS_LWA_INVOKE_MODE=response_stream
 
 EXPOSE 8000
 

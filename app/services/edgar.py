@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 
-CACHE_DIR = Path(".cache/edgar")
+CACHE_DIR = Path(get_settings().edgar_cache_dir)
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
 # SEC's stated ceiling is 10 req/s; we stay well under it.
