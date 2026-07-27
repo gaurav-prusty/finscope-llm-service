@@ -1,0 +1,13 @@
+{
+  "ticker": "AAPL",
+  "company_name": "Apple Inc.",
+  "cik": "0000320193",
+  "accession_number": "0000320193-25-000079",
+  "form": "10-K",
+  "filing_date": "2025-10-31",
+  "report_date": "2025-09-27",
+  "primary_document": "aapl-20250927.htm",
+  "item": "Item 1A. Risk Factors",
+  "extracted_char_count": 68044,
+  "source_url": "https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm"
+}

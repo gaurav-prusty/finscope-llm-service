@@ -1,0 +1,25 @@
+# FinScope LLM Service - Phase 1 dependencies
+# Version floors here -- the human-edited manifest. The Docker image installs from
+# requirements.lock.txt instead (Part 10), a fully-pinned freeze of this venv, for
+# reproducible builds. Regenerate the lockfile after changing anything here.
+
+# Web framework + server
+fastapi>=0.115
+uvicorn[standard]>=0.32
+
+# Data modeling / validation (the output contract) + typed config
+pydantic>=2.9
+pydantic-settings>=2.6
+
+# LLM provider SDK
+anthropic>=0.69
+
+# HTTP client (SEC EDGAR fetch)
+httpx>=0.27
+
+# Retries / backoff around the non-deterministic LLM call
+tenacity>=9.0
+
+# --- dev / test ---
+pytest>=8.3
+httpx2  # required by starlette.testclient (FastAPI TestClient) on newer Starlette; see Part 9 notes
