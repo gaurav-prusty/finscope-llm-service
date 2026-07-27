@@ -3,7 +3,7 @@
 pydantic-settings is the Python analog of Spring's @ConfigurationProperties: it
 reads typed values from the environment (and a local .env file), validates them,
 and exposes them as a single object. get_settings() is lru_cached so the whole
-app shares one instance — effectively a singleton config bean.
+app shares one instance - effectively a singleton config bean.
 
 Precedence (highest first): real environment variables > .env file > defaults
 here. In AWS (Part 11) the API key arrives as an injected env var from Secrets

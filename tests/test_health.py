@@ -1,7 +1,7 @@
 """Smoke test for the /health endpoint.
 
 TestClient wraps the FastAPI app so tests call it in-process (no real HTTP
-socket, no running server needed) — the FastAPI analog of Spring's
+socket, no running server needed) - the FastAPI analog of Spring's
 MockMvc/WebTestClient.
 """
 

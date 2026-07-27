@@ -1,4 +1,4 @@
-# FinScope LLM Service — Phase 1 dependencies
+# FinScope LLM Service - Phase 1 dependencies
 # Version floors here -- the human-edited manifest. The Docker image installs from
 # requirements.lock.txt instead (Part 10), a fully-pinned freeze of this venv, for
 # reproducible builds. Regenerate the lockfile after changing anything here.

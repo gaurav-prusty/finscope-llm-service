@@ -4,21 +4,21 @@ Run locally with:
     uvicorn app.main:app --reload
 
 This is the Spring Boot @SpringBootApplication equivalent: it builds the app
-object, and uvicorn (the ASGI server — think embedded Tomcat) serves it.
+object, and uvicorn (the ASGI server - think embedded Tomcat) serves it.
 Routes are added with decorators instead of @RestController/@GetMapping, but
 the shape is the same: a function per endpoint, a return value FastAPI
 serializes to JSON.
 
 Exception -> HTTP status mapping is centralized here via
 @app.exception_handler, the FastAPI equivalent of Spring's
-@ControllerAdvice/@ExceptionHandler — route bodies stay free of try/except
+@ControllerAdvice/@ExceptionHandler - route bodies stay free of try/except
 for errors that map the same way everywhere:
   - ValueError (edgar.py: unknown ticker / no matching filing)   -> 404
   - SummarizationFailedError (repair attempt also failed)        -> 502
   - anthropic.APIError (retries exhausted, or a non-retryable
-    upstream failure — see llm/client.py's retry policy)         -> 502
+    upstream failure - see llm/client.py's retry policy)         -> 502
 Both endpoints are Item-1A-only for now (RISK_FACTORS_ITEM_*_RE in
-services/edgar.py) — the only section this pipeline has been fixture-tested
+services/edgar.py) - the only section this pipeline has been fixture-tested
 against.
 """
 
@@ -81,7 +81,7 @@ async def anthropic_api_error_handler(request: Request, exc: anthropic.APIError)
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    """Liveness check. No LLM call here — this must stay fast and free."""
+    """Liveness check. No LLM call here - this must stay fast and free."""
     settings = get_settings()
     return {"status": "ok", "env": settings.app_env}
 
