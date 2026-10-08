@@ -15,6 +15,17 @@ Groq/Gemini free tiers proved unusable -- see Post-Phase-1 changes in `CLAUDE.md
 `phase1-summary.md`. All three endpoints are live: `/health`, `/summarize`, and `/summarize/stream`
 (real incremental SSE).
 
+## Live demo
+
+**[▶ Watch the demo (MP4)](finscope-llm-service.mp4)** - the service running on AWS Lambda:
+
+- `GET /health` - health check, running on AWS
+- `POST /summarize` - SEC 10-K → schema-validated JSON summary
+- `POST /summarize/stream` - the same summary, streamed live over SSE
+
+The Function URL itself isn't published here: it is public and unauthenticated, and sits on a
+free-tier LLM quota (5 requests/min), so it is shown in the video rather than linked.
+
 This is also a **learning project** - built with Claude Code under a teaching contract, meaning
 every non-trivial decision was narrated and reasoned through, not just generated. `phase1-summary.md`
 is the record of the judgment calls; this README is the practical "how to run it" reference.

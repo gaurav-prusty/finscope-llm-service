@@ -19,7 +19,9 @@ __pycache__/
 # Dev-only: tests and fixtures don't belong in a production image.
 tests/
 
-# Docs -- not needed to run the service.
+# Docs and demo video -- not needed to run the service (and the video would
+# bloat every build context by ~16 MB).
+*.mp4
 README.md
 CLAUDE.md
 SKILLS.md
