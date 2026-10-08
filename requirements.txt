@@ -11,8 +11,11 @@ uvicorn[standard]>=0.32
 pydantic>=2.9
 pydantic-settings>=2.6
 
-# LLM provider SDK
+# LLM provider SDKs -- all three installed; which one is active is a runtime
+# setting (LLM_PROVIDER), not a build-time choice. See app/llm/client.py.
 anthropic>=0.69
+google-genai>=1.0
+groq>=0.4
 
 # HTTP client (SEC EDGAR fetch)
 httpx>=0.27

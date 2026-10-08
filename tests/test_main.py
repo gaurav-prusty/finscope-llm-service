@@ -8,16 +8,20 @@ exception -> status code mapping, and SSE formatting. The two live-gated
 tests at the bottom exercise the real, unmocked pipeline end to end.
 """
 
+import groq
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from google.genai import errors as genai_errors
 
-from app.config import get_settings
 from app.llm.schemas import FilingAnalysis, FilingSummary
 from app.main import app
 from app.services.edgar import FilingMeta
 from app.services.summarize import StreamDelta, StreamDone, StreamError, SummarizationFailedError
+from tests.conftest import active_provider_supports_streaming, has_active_provider_key
 
-_HAS_API_KEY = bool(get_settings().anthropic_api_key)
+_HAS_API_KEY = has_active_provider_key()
+_STREAMING_SUPPORTED = active_provider_supports_streaming()
 
 client = TestClient(app)
 
@@ -83,7 +87,40 @@ def test_summarize_endpoint_summarization_failure_returns_502(monkeypatch) -> No
     assert response.status_code == 502
 
 
+def test_summarize_endpoint_gemini_api_error_returns_502(monkeypatch) -> None:
+    meta = _fake_meta()
+    monkeypatch.setattr("app.main.fetch_filing_section", lambda *a, **kw: (meta, "some risk factors text"))
+
+    def _raise_gemini_error(*a, **kw):
+        raise genai_errors.APIError(code=500, response_json={"message": "error", "status": "ERROR"})
+
+    monkeypatch.setattr("app.main.summarize_filing", _raise_gemini_error)
+
+    response = client.post("/summarize", json={"ticker": "AAPL"})
+
+    assert response.status_code == 502
+
+
+def test_summarize_endpoint_groq_api_error_returns_502(monkeypatch) -> None:
+    meta = _fake_meta()
+    monkeypatch.setattr("app.main.fetch_filing_section", lambda *a, **kw: (meta, "some risk factors text"))
+
+    def _raise_groq_error(*a, **kw):
+        request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+        raise groq.APIStatusError("error", response=httpx.Response(500, request=request), body=None)
+
+    monkeypatch.setattr("app.main.summarize_filing", _raise_groq_error)
+
+    response = client.post("/summarize", json={"ticker": "AAPL"})
+
+    assert response.status_code == 502
+
+
 def test_summarize_stream_endpoint_emits_sse_events(monkeypatch) -> None:
+    # Assumed True regardless of the actually-configured LLM_PROVIDER -- this
+    # test is about SSE formatting, not provider capability (see the 501 test
+    # below for that).
+    monkeypatch.setattr("app.main.provider_supports_streaming", lambda provider: True)
     meta = _fake_meta()
     monkeypatch.setattr("app.main.fetch_filing_section", lambda *a, **kw: (meta, "some risk factors text"))
 
@@ -105,7 +142,22 @@ def test_summarize_stream_endpoint_emits_sse_events(monkeypatch) -> None:
     assert '"ticker": "AAPL"' in body
 
 
+def test_summarize_stream_endpoint_returns_501_for_unsupported_provider(monkeypatch) -> None:
+    """Groq can't combine streaming with structured output (see
+    LLMClient.supports_streaming) -- this must fail BEFORE the SSE response
+    starts (a clean 501), not mid-stream. Monkeypatches the capability check
+    directly so this is independent of whatever LLM_PROVIDER is actually
+    configured when the suite runs."""
+    monkeypatch.setattr("app.main.provider_supports_streaming", lambda provider: False)
+
+    response = client.post("/summarize/stream", json={"ticker": "AAPL"})
+
+    assert response.status_code == 501
+    assert "does not support streaming" in response.json()["detail"]
+
+
 def test_summarize_stream_endpoint_emits_error_event_on_validation_failure(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.provider_supports_streaming", lambda provider: True)
     meta = _fake_meta()
     monkeypatch.setattr("app.main.fetch_filing_section", lambda *a, **kw: (meta, "some risk factors text"))
 
@@ -122,7 +174,7 @@ def test_summarize_stream_endpoint_emits_error_event_on_validation_failure(monke
     assert "failed validation" in response.text
 
 
-@pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
+@pytest.mark.skipif(not _HAS_API_KEY, reason="requires an API key for the active LLM_PROVIDER")
 def test_summarize_endpoint_end_to_end_real_pipeline() -> None:
     response = client.post("/summarize", json={"ticker": "AAPL"})
 
@@ -132,7 +184,10 @@ def test_summarize_endpoint_end_to_end_real_pipeline() -> None:
     assert len(body["analysis"]["risk_factors"]) >= 1
 
 
-@pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
+@pytest.mark.skipif(
+    not (_HAS_API_KEY and _STREAMING_SUPPORTED),
+    reason="requires an API key for the active LLM_PROVIDER, and a provider that supports streaming",
+)
 def test_summarize_stream_endpoint_end_to_end_real_pipeline() -> None:
     response = client.post("/summarize/stream", json={"ticker": "AAPL"})
 

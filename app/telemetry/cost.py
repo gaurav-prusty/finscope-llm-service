@@ -1,7 +1,8 @@
 """Per-request token + cost telemetry (Part 7).
 
 log_usage() is the one hook point every LLM call goes through -- wired into
-AnthropicClient.generate_structured() (app/llm/client.py), the same
+every LLMClient implementation's generate_structured()/stream_structured()
+(app/llm/client.py), the same
 placement logic as Part 6's retry layer: "how much did this call cost" is a
 client concern (any caller wants this), not filing-summarization business
 policy that belongs in services/.
@@ -28,6 +29,20 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-5": (3.00, 15.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
+    # Explicitly (0.0, 0.0), not omitted -- this IS the free tier's real price,
+    # not an unpriced/unknown model (see the None-vs-0.0 distinction below).
+    # If usage ever exceeds the free-tier quota, Gemini rate-limits (429) at
+    # the API-key tier rather than silently billing, so 0.0 stays accurate.
+    "gemini-3.6-flash": (0.0, 0.0),
+    # Same reasoning: Groq's Free tier is a separate, non-billing tier from
+    # its opt-in "Developer" plan (console.groq.com/settings/billing/plans) --
+    # exceeding the free quota 429s, it doesn't charge, unless you explicitly
+    # upgrade. If you do upgrade, the real standard rate is $0.15/$0.60 per
+    # MTok in/out (groq.com/pricing) -- update this entry if that happens.
+    "openai/gpt-oss-120b": (0.0, 0.0),
+    # Cerebras's free tier (no "openai/" prefix on its model id). Free-tier
+    # overage 429s rather than bills, same reasoning as Groq above.
+    "gpt-oss-120b": (0.0, 0.0),
 }
 
 

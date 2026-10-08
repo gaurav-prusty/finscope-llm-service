@@ -13,7 +13,6 @@ from contextlib import contextmanager
 import pytest
 from pydantic import ValidationError
 
-from app.config import get_settings
 from app.llm.client import LLMClient, LLMResult, LLMStream, LLMUsage
 from app.llm.schemas import FilingAnalysis, FilingSummary
 from app.services.summarize import (
@@ -24,8 +23,10 @@ from app.services.summarize import (
     stream_summarize_filing,
     summarize_filing,
 )
+from tests.conftest import active_provider_supports_streaming, has_active_provider_key
 
-_HAS_API_KEY = bool(get_settings().anthropic_api_key)
+_HAS_API_KEY = has_active_provider_key()
+_STREAMING_SUPPORTED = active_provider_supports_streaming()
 
 
 def _valid_analysis() -> FilingAnalysis:
@@ -144,7 +145,37 @@ def test_stream_summarize_filing_yields_error_on_validation_failure_no_repair(aa
     assert fake.calls == []  # generate_structured (the repair path) was never touched
 
 
-@pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
+class _ExplodingStreamClient(_FakeLLMClient):
+    """Simulates a provider that fails when the stream is first iterated --
+    which is when a real provider's lazy HTTP call actually happens (outage,
+    quota, timeout), i.e. AFTER StreamingResponse has committed its 200."""
+
+    @contextmanager
+    def stream_structured(self, *, system, user, response_model):
+        def _text_stream():
+            raise RuntimeError("503 UNAVAILABLE: model is overloaded")
+            yield  # makes this a generator, so the error fires on first next()
+
+        yield LLMStream(text_stream=_text_stream(), get_final_result=lambda: None)
+
+
+def test_stream_summarize_filing_yields_error_on_upstream_failure(aapl_filing) -> None:
+    """Regression for a real bug found live: a provider failure during the
+    stream used to escape the generator and crash the response with
+    'Caught handled exception, but response already started'. It must become
+    an in-band StreamError instead."""
+    meta, section_text = aapl_filing
+    fake = _ExplodingStreamClient([])
+
+    events = list(stream_summarize_filing(meta, section_text, client=fake))
+
+    assert len(events) == 1
+    assert isinstance(events[0], StreamError)
+    assert "Upstream LLM failure" in events[0].detail
+    assert "503" in events[0].detail
+
+
+@pytest.mark.skipif(not _HAS_API_KEY, reason="requires an API key for the active LLM_PROVIDER")
 def test_summarize_filing_end_to_end_on_real_fixture(aapl_filing) -> None:
     meta, section_text = aapl_filing
 
@@ -156,7 +187,10 @@ def test_summarize_filing_end_to_end_on_real_fixture(aapl_filing) -> None:
     assert len(summary.analysis.risk_factors) >= 1
 
 
-@pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
+@pytest.mark.skipif(
+    not (_HAS_API_KEY and _STREAMING_SUPPORTED),
+    reason="requires an API key for the active LLM_PROVIDER, and a provider that supports streaming",
+)
 def test_stream_summarize_filing_end_to_end_on_real_fixture(aapl_filing) -> None:
     meta, section_text = aapl_filing
 
