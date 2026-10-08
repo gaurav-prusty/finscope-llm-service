@@ -1,10 +1,12 @@
 """Core summarization service: build prompt -> call LLM -> validate -> repair-then-fail.
 
 Policy (locked in at plan time): one repair attempt on a validation failure,
-then fail loudly. This module owns that policy -- AnthropicClient stays a
-thin, single-shot "call once, validate once" wrapper (see app/llm/client.py);
-repair-then-fail is filing-summarization business logic, not a generic
-client capability.
+then fail loudly. This module owns that policy -- each LLMClient
+implementation stays a thin, single-shot "call once, validate once" wrapper
+(see app/llm/client.py); repair-then-fail is filing-summarization business
+logic, not a generic client capability. Which provider is actually behind
+`client or get_llm_client()` is config.py's llm_provider setting -- this
+module never imports AnthropicClient, GeminiClient, or GroqClient directly.
 
 stream_summarize_filing() (Part 8) deliberately does NOT get repair-then-
 fail -- see app/llm/client.py's module docstring for why streamed structured
@@ -15,15 +17,18 @@ something concrete to translate into wire events without reaching into LLM
 internals.
 """
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from app.llm.client import AnthropicClient, LLMClient
+from app.llm.client import LLMClient, get_llm_client
 from app.llm.prompts import DEFAULT_VERSION, get_prompt_module
 from app.llm.schemas import FilingAnalysis, FilingSummary
 from app.services.edgar import FilingMeta
+
+logger = logging.getLogger(__name__)
 
 
 class SummarizationFailedError(Exception):
@@ -51,7 +56,7 @@ def summarize_filing(
     that deterministically fails validation, instead of depending on the
     real model happening to misbehave (see tests/test_summarize.py).
     """
-    llm = client or AnthropicClient()
+    llm = client or get_llm_client()
     prompt = get_prompt_module(prompt_version)
     user_prompt = prompt.build_user_prompt(meta, section_text)
 
@@ -104,7 +109,7 @@ def stream_summarize_filing(
     caller that needs a guaranteed-valid result should call
     summarize_filing() instead.
     """
-    llm = client or AnthropicClient()
+    llm = client or get_llm_client()
     prompt = get_prompt_module(prompt_version)
     user_prompt = prompt.build_user_prompt(meta, section_text)
 
@@ -119,6 +124,18 @@ def stream_summarize_filing(
             result = stream.get_final_result()
     except ValidationError as error:
         yield StreamError(detail=f"Streamed response failed validation: {error}")
+        return
+    except Exception as error:
+        # Provider failures (outage, quota, timeout) surface HERE, inside the
+        # generator, because the provider call is lazy -- it runs on the first
+        # iteration of text_stream, after StreamingResponse has already sent its
+        # 200 header. @app.exception_handler can't turn that into a 502 anymore
+        # (Starlette raises "response already started"), so the only honest way to
+        # report it is an in-band error event. Deliberately broad: services/ must
+        # not import provider SDK exception types (see llm/client.py), and at this
+        # point there is no other channel left to report on.
+        logger.exception("stream_summarize_filing failed mid-stream for %s", meta.ticker)
+        yield StreamError(detail=f"Upstream LLM failure: {type(error).__name__}: {error}")
         return
 
     yield StreamDone(summary=FilingSummary(meta=meta, analysis=result.parsed))

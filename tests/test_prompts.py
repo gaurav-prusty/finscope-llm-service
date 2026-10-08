@@ -3,7 +3,8 @@
 Two kinds of test live here:
   - Rendering tests (offline, no LLM calls): verify the version registry and
     that v1's templates render correctly against real fixtures.
-  - Regression tests (Part 9, live-gated on ANTHROPIC_API_KEY): one real
+  - Regression tests (Part 9, live-gated on the active LLM_PROVIDER's API
+    key -- see tests/conftest.py's has_active_provider_key()): one real
     call per held-out filing (AAPL and MSFT), asserting on the shape/quality
     of what comes back. These do NOT re-test schema validity -- pydantic
     already guarantees that on every real call (Part 2/5); a
@@ -21,12 +22,12 @@ Two kinds of test live here:
 
 import pytest
 
-from app.config import get_settings
 from app.llm.prompts import DEFAULT_VERSION, get_prompt_module, v1
 from app.llm.schemas import FilingAnalysis
 from app.services.summarize import summarize_filing
+from tests.conftest import has_active_provider_key
 
-_HAS_API_KEY = bool(get_settings().anthropic_api_key)
+_HAS_API_KEY = has_active_provider_key()
 
 
 def test_default_version_is_v1() -> None:
@@ -86,14 +87,14 @@ def _assert_reasonable_risk_factors_analysis(analysis: FilingAnalysis) -> None:
     assert len(analysis.caveats) >= 1
 
 
-@pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
+@pytest.mark.skipif(not _HAS_API_KEY, reason="requires the active LLM_PROVIDER's API key")
 def test_v1_regression_aapl_risk_factors(aapl_filing) -> None:
     meta, section_text = aapl_filing
     summary = summarize_filing(meta, section_text)
     _assert_reasonable_risk_factors_analysis(summary.analysis)
 
 
-@pytest.mark.skipif(not _HAS_API_KEY, reason="requires ANTHROPIC_API_KEY")
+@pytest.mark.skipif(not _HAS_API_KEY, reason="requires the active LLM_PROVIDER's API key")
 def test_v1_regression_msft_risk_factors(msft_filing) -> None:
     meta, section_text = msft_filing
     summary = summarize_filing(meta, section_text)
