@@ -236,3 +236,76 @@ real pipeline.
 promoted to their own contract (CLAUDE.md's "Phase closeout contract") specifically because later
 FinScope phases depend on being able to read back *why* Phase 1 is built this way without
 re-deriving it from git history or chat transcripts.
+
+## Addendum (post-Phase-1) - the provider saga: Anthropic -> Gemini -> Groq -> Cerebras
+
+Written for Phase 2+: **the live service no longer runs on Anthropic.** Everything below happened
+after Part 12 closed, driven by one fact - Anthropic credits ran out - and it is the most useful
+record in this file of how provider selection actually goes wrong.
+
+**What shipped**: four `LLMClient` implementations behind `get_llm_client()`, one `llm_provider`
+setting to switch. Current default and what is deployed on Lambda: **Cerebras**, free-tier
+`gpt-oss-120b`. All three endpoints work, including `POST /summarize/stream` (only Groq can't
+stream structured output and returns 501). Part 3's bet - a task-agnostic interface -
+held through three new providers with zero changes to `services/summarize.py` or the prompts.
+
+**The judgment calls, and what each one taught**:
+
+1. *Groq looked like the clear winner on paper and was unusable.* We picked it on requests/day
+   (1,000 vs Gemini's 20). Its strict mode then rejected our schema twice - `additionalProperties:
+   false` on every object, and every property listed in `required` (pydantic omits defaulted
+   fields like `caveats`). Fixed inside `GroqClient` by rewriting a copy of the schema
+   (`_to_groq_strict_schema`), deliberately NOT by changing `schemas.py`: provider quirks belong
+   in the provider's client, not in the provider-neutral contract. Then the real wall: **8,000
+   tokens/minute** on every structured-output model vs ~13K tokens for one full Item 1A section.
+   A 413 that no retry or wait can ever fix. *Lesson: evaluate a provider on the dimension that
+   binds for your payload (tokens/min vs request size), not the headline number.*
+2. *An offline test encoded the bug.* The Groq guard test asserted the request carried the raw
+   `model_json_schema()` - exactly what Groq rejects. It passed while production would 400.
+   *Lesson: a test that mirrors the implementation proves consistency, not correctness; only a
+   live call against the real API validates what you send.*
+3. *Gemini worked and still couldn't carry the deploy*: 20 requests/day/model, 5/minute, and
+   frequent 503 "high demand". The daily quota ran out mid-testing. Its quota is per model, so
+   other Gemini models were a zero-code fallback, but the 503s made it unreliable for a same-day
+   proof.
+4. *Cerebras, chosen under a deadline.* Hugging Face was ruled out (~$0.10/month of credit);
+   Mistral (500K tokens/min free) is the noted backup; AWS Bedrock (Nova Lite ~$0.001 per summary,
+   and no API key at all on Lambda via IAM) is the best long-term AWS-native story and the likely
+   upgrade path. Cerebras won on risk: same model family as the Groq work, same strict-schema
+   rules, so `_to_groq_strict_schema` was reused unchanged. Built as a plain-`httpx` client
+   instead of adding an SDK - no new dependency, no lockfile regeneration, no Docker dependency
+   change, which mattered on a same-day deploy. One small provider-neutral `LLMProviderError`
+   (HTTP status, or `None` for network failure) stands in for the SDK exception hierarchy the
+   other clients get for free.
+5. *Reserved output counts against the token budget.* Cerebras 429'd with 13K input +
+   `max_completion_tokens=16000` against a 30K/min cap. A summary needs ~1.5K output tokens, so
+   the default dropped to 8,000. A **stale `LLM_MAX_TOKENS=16000` in a local `.env`** then
+   silently overrode the fixed code default (env > .env > defaults) and caused two more
+   confusing 429s - the Lambda was fine only because it had no such variable.
+6. *A real Part 8 bug surfaced by an upstream 503.* The provider call inside a streaming
+   generator is lazy - it fires on first iteration, after the `200` header is already sent - so
+   exception handlers can no longer turn a failure into a 502 ("response already started").
+   `stream_summarize_filing` now catches `Exception` and yields an in-band `StreamError`
+   event; the deliberately broad catch keeps `services/` free of provider SDK imports.
+
+7. *Streaming on Cerebras: ship it off, then prove it on.* First deploy returned a clean 501 on
+   `/summarize/stream` because the docs were silent on streaming + strict schemas. Reading further
+   showed they flag only the legacy `json_object` mode as incompatible, and put token usage on
+   the final chunk, so `CerebrasClient.stream_structured()` was implemented the same day by
+   hand-parsing the OpenAI-style SSE over `httpx` (no repair step, as with every streaming path
+   here). *Lesson: "unverified" is a reason to test, and a 501 guard is cheap to flip once a live
+   test says yes.*
+
+**How it landed**: redeployed 2026-10-08 on Lambda, live-verified at the same Function URL - all
+three endpoints: `/health`, `/summarize` (real AAPL summaries with identical schema but different
+wording and sentiment on each call: genuine non-determinism), and `/summarize/stream` (about 70
+genuinely incremental SSE deltas, then a `done` event carrying the full validated summary). The
+Part 9 regression thresholds pass on Cerebras output for both AAPL and MSFT. Tokens/minute is the
+binding free-tier limit (a full-filing call reserves ~21K of 30K), so live tests run one per
+minute and `scripts/smoke_test.py` should use `--summarize-n 1` on this provider.
+
+**Open items for whoever picks this up**: (a) `financial_highlights` is weak filler on an
+Item-1A-only excerpt (unchanged from Parts 4/5/9) - the real fix is also fetching Item 7 (MD&A),
+not relaxing the schema; (b) Cerebras's 5 requests/minute and 30K tokens/minute free caps make
+concurrent callers (Phase 2's ingestion/eval loops) a real constraint - budget for a paid tier or
+Bedrock before building anything that calls this in a loop.
