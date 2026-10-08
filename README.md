@@ -17,7 +17,7 @@ Groq/Gemini free tiers proved unusable -- see Post-Phase-1 changes in `CLAUDE.md
 
 ## Live demo
 
-**[▶ Watch the demo (MP4)](finscope-llm-service.mp4)** - the service running on AWS Lambda:
+**[▶ Watch the demo (Google Drive)](https://drive.google.com/file/d/1zlsChBmUbgCqE7RfsBKvuUEM_fmCecz7/view?usp=sharing)** - the service running on AWS Lambda:
 
 - `GET /health` - health check, running on AWS
 - `POST /summarize` - SEC 10-K → schema-validated JSON summary
